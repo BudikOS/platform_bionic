@@ -135,30 +135,12 @@ static bool get_environment_memtag_setting(HeapTaggingLevel* level) {
   const bool is_vendor_prog = starts_with(progname, "/vendor/") || starts_with(progname, "/apex/com.google.");
   const bool is_debug_build = is_debuggable_build();
   if (is_vendor_prog) {
-    char device_name[PROP_VALUE_MAX];
-    get_property_value("ro.product.name", device_name, sizeof(device_name));
-    bool apply_override =
-        strcmp(progname, "/apex/com.google.pixel.camera.hal/bin/hw/android.hardware.camera.provider@2.7-service-google") != 0
-        && strcmp(progname, "/apex/com.google.android.widevine/bin/hw/android.hardware.drm-service.widevine-rikers") != 0
-        && (
-            (
-                 strcmp(device_name, "tokay") != 0
-                 && strcmp(device_name, "caiman") != 0
-                 && strcmp(device_name, "komodo") != 0
-                 && strcmp(device_name, "comet") != 0
-                 && strcmp(device_name, "stallion") != 0
-                 && strcmp(device_name, "frankel") != 0
-                 && strcmp(device_name, "blazer") != 0
-                 && strcmp(device_name, "mustang") != 0
-                 && strcmp(device_name, "rango") != 0
-            ) || strcmp(progname, "/vendor/bin/shared_modem_platform") != 0
-        )
-    ;
-    if (apply_override) {
-        *level = M_HEAP_TAGGING_LEVEL_ASYNC;
-    } else if (!is_debug_build) {
-        return true;
-     }
+    char mte_vendor_enabled[PROP_VALUE_MAX];
+    get_property_value("persist.sys.phh.hardening.mte_vendor", mte_vendor_enabled, sizeof(mte_vendor_enabled));
+    if (strcmp(mte_vendor_enabled, "true") != 0) {
+      *level = M_HEAP_TAGGING_LEVEL_NONE;
+      return true;
+    }
   }
 
   if (!is_debug_build) {
@@ -179,7 +161,7 @@ static bool get_environment_memtag_setting(HeapTaggingLevel* level) {
 
   if (!get_config_from_env_or_sysprops("MEMTAG_OPTIONS", sys_prop_names, arraysize(sys_prop_names),
                                        options_str, sizeof(options_str))) {
-    return is_vendor_prog;
+    return false;
   }
 
   if (strcmp("sync", options_str) == 0) {
@@ -188,10 +170,12 @@ static bool get_environment_memtag_setting(HeapTaggingLevel* level) {
     *level = M_HEAP_TAGGING_LEVEL_ASYNC;
   } else if (strcmp("off", options_str) == 0) {
     *level = M_HEAP_TAGGING_LEVEL_TBI;
+  } else if (strcmp("none", options_str) == 0) {
+    *level = M_HEAP_TAGGING_LEVEL_NONE;
   } else {
     async_safe_format_log(
         ANDROID_LOG_ERROR, "libc",
-        "unrecognized memtag level: \"%s\" (options are \"sync\", \"async\", or \"off\").",
+        "unrecognized memtag level: \"%s\" (options are \"sync\", \"async\", \"off\", or \"none\").",
         options_str);
     return false;
   }
@@ -297,6 +281,15 @@ __attribute__((no_sanitize("hwaddress", "memtag"))) void __libc_init_mte(
   HeapTaggingLevel level =
       __get_tagging_level(memtag_dynamic_entries, phdr_start, phdr_ct, load_bias, &memtag_stack);
   if (memtag_stack) __libc_shared_globals()->initial_memtag_stack_abi = true;
+
+  // "none" means fully disable all pointer tagging (no MTE, no TBI). This is
+  // needed for processes that communicate with kernel drivers (e.g. TEE drivers)
+  // that cannot handle tagged pointers in their copy_from_user/copy_to_user paths.
+  if (level == M_HEAP_TAGGING_LEVEL_NONE) {
+    __libc_shared_globals()->initial_heap_tagging_level = M_HEAP_TAGGING_LEVEL_NONE;
+    __libc_shared_globals()->heap_tagging_upgrade_timer_sec = 0;
+    return;
+  }
 
   if (int64_t timed_upgrade = __get_memtag_upgrade_secs()) {
     if (level == M_HEAP_TAGGING_LEVEL_ASYNC) {

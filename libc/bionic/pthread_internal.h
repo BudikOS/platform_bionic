@@ -264,15 +264,13 @@ __LIBC_HIDDEN__ void pthread_key_clean_all(void);
 #define SIGNAL_STACK_SIZE_WITHOUT_GUARD (16 * 1024)
 #endif
 
-// Traditionally we gave threads a 1MiB stack. When we started
-// allocating per-thread alternate signal stacks to ease debugging of
-// stack overflows, we subtracted the same amount we were using there
-// from the default thread stack size. This should keep memory usage
-// roughly constant.
-#ifdef __LP64__
-#define PTHREAD_STACK_SIZE_DEFAULT ((8 * 1024 * 1024) - SIGNAL_STACK_SIZE_WITHOUT_GUARD)
-#else
+// Default to AOSP 1MB. GrapheneOS 8MB is applied at runtime when stack
+// hardening is enabled via persist.sys.phh.hardening.stack_hardening.
 #define PTHREAD_STACK_SIZE_DEFAULT ((1 * 1024 * 1024) - SIGNAL_STACK_SIZE_WITHOUT_GUARD)
+#ifdef __LP64__
+#define PTHREAD_STACK_SIZE_HARDENED ((8 * 1024 * 1024) - SIGNAL_STACK_SIZE_WITHOUT_GUARD)
+#else
+#define PTHREAD_STACK_SIZE_HARDENED ((1 * 1024 * 1024) - SIGNAL_STACK_SIZE_WITHOUT_GUARD)
 #endif
 
 // Leave room for a guard page in the internally created signal stacks.

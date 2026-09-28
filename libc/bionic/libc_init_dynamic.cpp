@@ -53,23 +53,6 @@
 #include "private/bionic_ssp.h"
 #include "private/bionic_tls.h"
 #include "private/KernelArgumentBlock.h"
-#include "sys/system_properties.h"
-#include "sysprop_helpers.h"
-
-static bool starts_with(const char* s, const char* prefix) {
-  return strncmp(s, prefix, strlen(prefix)) == 0;
-}
-
-static bool is_debuggable_build() {
-#ifdef IS_DEBUGGABLE_BUILD
-    return true;
-#else
-    return false;
-#endif
-}
-
-extern "C" const char* __gnu_basename(const char* path);
-
 extern "C" {
   extern void netdClientInit(void);
   extern int __cxa_atexit(void (*)(void *), void *, void *);
@@ -93,74 +76,6 @@ extern "C" __attribute__((weak)) void __hwasan_library_loaded(ElfW(Addr) base,
 extern "C" __attribute__((weak)) void __hwasan_library_unloaded(ElfW(Addr) base,
                                                                 const ElfW(Phdr)* phdr,
                                                                 ElfW(Half) phnum);
-
-static void init_prog_id(libc_globals* globals) {
-  char exe_path[500];
-  ssize_t readlink_res = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1 /* space for NUL terminator */);
-  if (readlink_res <= 0) {
-    return;
-  }
-  exe_path[readlink_res] = '\0';
-
-  int prog_id = 0;
-  int flags = 0;
-
-#define IS(prog) (!strcmp(exe_path, prog))
-
-  if (IS("/apex/com.google.pixel.camera.hal/bin/hw/android.hardware.camera.provider@2.7-service-google")) {
-    prog_id = PROG_PIXEL_CAMERA_PROVIDER_SERVICE;
-  }
-  else if (IS("/system/bin/surfaceflinger")) {
-    prog_id = PROG_SURFACEFLINGER;
-  }
-  else if (IS("/vendor/bin/hw/android.hardware.audio.service")) {
-    // needed for Pixel Tablet as of Android 15, see https://github.com/GrapheneOS/os-issue-tracker/issues/4306
-    flags = GLOBAL_FLAG_DISABLE_HARDENED_MALLOC;
-  } else if (IS("/vendor/bin/shared_modem_platform")) {
-    char device_name[PROP_VALUE_MAX];
-    get_property_value("ro.product.name", device_name, sizeof(device_name));
-    if (strcmp(device_name, "tokay") == 0
-        || strcmp(device_name, "caiman") == 0
-        || strcmp(device_name, "komodo") == 0
-        || strcmp(device_name, "comet") == 0
-        || strcmp(device_name, "stallion") == 0
-        || strcmp(device_name, "frankel") == 0
-        || strcmp(device_name, "blazer") == 0
-        || strcmp(device_name, "mustang") == 0
-        || strcmp(device_name, "rango") == 0
-    ) {
-      flags = GLOBAL_FLAG_DISABLE_HARDENED_MALLOC;
-    }
-  }
-
-#undef IS
-
-  bool is_debuggable = is_debuggable_build();
-  const bool is_vendor_prog = starts_with(exe_path, "/vendor/") || starts_with(exe_path, "/apex/com.google.");
-  if (is_debuggable && is_vendor_prog) {
-    const char* basename = __gnu_basename(exe_path);
-    static const char propName[] = "persist.device_config.memory_safety_native.hardened_malloc.mode_override.process.";
-    char sysprop_name[512];
-    char sysprop_value[PROP_VALUE_MAX] = {};
-    async_safe_format_buffer(sysprop_name, sizeof(sysprop_name), "%s%s", propName,
-                             basename);
-    get_property_value(sysprop_name, sysprop_value, sizeof(sysprop_value));
-    if (strcmp("disabled", sysprop_value) == 0) {
-      flags = GLOBAL_FLAG_DISABLE_HARDENED_MALLOC;
-    } else if (strcmp("enabled", sysprop_value) == 0) {
-      prog_id = 0;
-      flags = 0;
-    }
-  }
-
-  // libc_globals struct is write-protected
-  globals->flags = flags;
-  globals->prog_id = prog_id;
-}
-
-int get_prog_id() {
-  return __libc_globals->prog_id;
-}
 
 // We need a helper function for __libc_preinit because compiling with LTO may
 // inline functions requiring a stack protector check, but __stack_chk_guard is
@@ -194,7 +109,6 @@ static void __libc_preinit_impl() {
 
   // Hooks for various libraries to let them know that we're starting up.
   __libc_globals.mutate([](libc_globals* globals) {
-    init_prog_id(globals);
     __libc_init_malloc(globals);
 
     // save the default SIGABRT handler to support restoring it with mallopt(M_BIONIC_RESTORE_DEFAULT_SIGABRT_HANDLER)

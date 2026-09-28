@@ -191,24 +191,13 @@ cc_defaults {
 
     header_libs: ["gwp_asan_headers"],
     whole_static_libs: ["libscudo"],
+    cflags: ["-DUSE_SCUDO"],
 
     multilib: {
         lib32: {
-            cflags: ["-DUSE_SCUDO"],
             exclude_static_libs: [
                 "libjemalloc5",
                 "libc_jemalloc_wrapper",
-            ],
-        },
-        lib64: {
-            srcs: [":libc_h_malloc_wrapper_src"],
-            cflags: [
-                "-DH_MALLOC_PREFIX",
-                "-DUSE_H_MALLOC",
-                "-DUSE_SCUDO",
-            ],
-            whole_static_libs: [
-                "libhardened_malloc",
             ],
         },
     },
@@ -225,10 +214,6 @@ cc_library_static {
             // library is removed, the include directory is also removed.
             srcs: ["bionic/jemalloc_wrapper.cpp"],
             static_libs: ["libjemalloc5"],
-        },
-        lib64: {
-            srcs: [":libc_h_malloc_wrapper_src"],
-            static_libs: ["libhardened_malloc"],
         },
     },
     cflags: ["-fvisibility=hidden"],
